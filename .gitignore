@@ -1,0 +1,5 @@
+.env
+minio-data/
+certs/
+*.log
+
