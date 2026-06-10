@@ -93,7 +93,7 @@ DEPLOY_PASSWORD
 DEPLOY_ENV_FILE
 ```
 
-`DEPLOY_PORT` utilise `22` par defaut. `DEPLOY_ENV_FILE` doit contenir le contenu complet du fichier `.env` de production. La pipeline ne demande ni passphrase, ni cle privee/publique. Le compte `DEPLOY_USER` doit pouvoir ecrire dans `DEPLOY_PATH` et executer Docker Compose. Si Compose est absent, la pipeline installe Compose v2 dans `~/.docker/cli-plugins` sans utiliser `sudo`. Cette installation automatique requiert `curl` ou `wget` et une architecture serveur `x86_64` ou `arm64`.
+`DEPLOY_PORT` utilise `22` par defaut. `DEPLOY_ENV_FILE` doit contenir le contenu complet du fichier `.env` de production. La pipeline ne demande ni passphrase, ni cle privee/publique. Le compte `DEPLOY_USER` doit pouvoir ecrire dans `DEPLOY_PATH` et acceder au daemon Docker, directement via le groupe `docker` ou avec `sudo` sans mot de passe. Si Compose est absent, la pipeline installe Compose v2 dans `~/.docker/cli-plugins` sans utiliser `sudo`. Cette installation automatique requiert `curl` ou `wget` et une architecture serveur `x86_64` ou `arm64`.
 
 Pour mettre a jour MinIO, modifie la version par defaut de l'image dans `docker-compose.yml`, commit, puis declenche la pipeline. Si `MINIO_VERSION` est defini dans le `.env` du serveur, cette valeur distante prendra le dessus. Attention : certaines releases source MinIO n'ont pas d'image Docker publique correspondante ; verifie toujours le tag Docker avant de le deployer.
 

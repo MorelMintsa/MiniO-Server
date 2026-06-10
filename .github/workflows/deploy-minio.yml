@@ -169,9 +169,27 @@ jobs:
             exit 1
           fi
 
+          if docker info >/dev/null 2>&1; then
+            docker_command=(docker)
+          elif command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
+            docker_command=(sudo docker)
+            if [ -x "$HOME/.docker/cli-plugins/docker-compose" ]; then
+              compose=(sudo "$HOME/.docker/cli-plugins/docker-compose")
+            else
+              compose=(sudo "${compose[@]}")
+            fi
+          else
+            echo "The deployment user cannot connect to the Docker daemon." >&2
+            echo "Ensure Docker is running, then add the deployment user to the docker group:" >&2
+            echo "  sudo systemctl enable --now docker" >&2
+            echo "  sudo usermod -aG docker $(id -un)" >&2
+            echo "Reconnect the SSH session after changing group membership." >&2
+            exit 1
+          fi
+
           "${compose[@]}" config --quiet
           "${compose[@]}" pull
           "${compose[@]}" up -d --remove-orphans
           "${compose[@]}" ps
-          docker image prune -f
+          "${docker_command[@]}" image prune -f
           EOF
