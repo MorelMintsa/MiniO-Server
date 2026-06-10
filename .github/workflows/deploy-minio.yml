@@ -2,8 +2,7 @@ name: Deploy MinIO
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
       - docker-compose.yml
       - scripts/**
@@ -16,68 +15,125 @@ jobs:
   validate:
     name: Validate compose
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    permissions:
+      contents: read
 
-      - name: Prepare validation env
-        run: cp .env.example .env
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Validate Docker Compose
-        run: docker compose config
+        run: docker compose --env-file .env.example config --quiet
 
-  deploy:
-    name: Deploy to server
-    runs-on: ubuntu-latest
+  setup:
+    name: Setup - Copy files and write .env
     needs: validate
-    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+
+    env:
+      SERVER_HOST: ${{ secrets.DEPLOY_HOST }}
+      SERVER_USER: ${{ secrets.DEPLOY_USER }}
+      SERVER_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      SSHPASS: ${{ secrets.DEPLOY_PASSWORD }}
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Start SSH agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
-
-      - name: Trust deploy host
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      - name: Install SSH password client
         run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y sshpass
+
+      - name: Setup SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SERVER_HOST"
+          test -n "$SERVER_USER"
+          test -n "$SERVER_PORT"
+          test -n "$DEPLOY_PATH"
+          test -n "$SSHPASS"
+
           mkdir -p ~/.ssh
-          ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          chmod 700 ~/.ssh
+          ssh-keyscan -p "$SERVER_PORT" -H "$SERVER_HOST" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
-      - name: Sync project files
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      - name: Create deployment directory
         run: |
-          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
-          rsync -az --delete \
-            -e "ssh -p $DEPLOY_PORT" \
-            --exclude ".git/" \
-            --exclude ".env" \
-            --exclude "minio-data/" \
-            --exclude "certs/" \
-            ./ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+          sshpass -e ssh -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" \
+            "mkdir -p '$DEPLOY_PATH'"
 
-      - name: Update MinIO stack
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      - name: Sync source code to server
         run: |
-          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "
-            set -eu
-            cd '$DEPLOY_PATH'
-            test -f .env
-            docker compose pull
-            docker compose up -d --remove-orphans
-            docker compose ps
-            docker image prune -f
-          "
+          tar -czf - docker-compose.yml scripts | \
+            sshpass -e ssh -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" \
+              "tar -xzf - -C '$DEPLOY_PATH'"
+
+      - name: Write .env on server
+        env:
+          DEPLOY_ENV_FILE: ${{ vars.DEPLOY_ENV_FILE }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_ENV_FILE"
+          printf '%s\n' "$DEPLOY_ENV_FILE" | \
+            sshpass -e ssh -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" \
+              "umask 077 && cat > '$DEPLOY_PATH/.env'"
+
+  deploy-minio:
+    name: Deploy - MinIO stack
+    needs: setup
+    runs-on: ubuntu-latest
+    environment: production
+
+    env:
+      SERVER_HOST: ${{ secrets.DEPLOY_HOST }}
+      SERVER_USER: ${{ secrets.DEPLOY_USER }}
+      SERVER_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      SSHPASS: ${{ secrets.DEPLOY_PASSWORD }}
+
+    steps:
+      - name: Install SSH password client
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y sshpass
+
+      - name: Setup SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SERVER_HOST"
+          test -n "$SERVER_USER"
+          test -n "$SERVER_PORT"
+          test -n "$DEPLOY_PATH"
+          test -n "$SSHPASS"
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -p "$SERVER_PORT" -H "$SERVER_HOST" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Pull and start MinIO
+        run: |
+          sshpass -e ssh -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" \
+            "DEPLOY_PATH='$DEPLOY_PATH' bash -s" << 'EOF'
+          set -euo pipefail
+          cd "$DEPLOY_PATH"
+
+          test -f .env
+          chmod 600 .env
+
+          docker compose config --quiet
+          docker compose pull
+          docker compose up -d --remove-orphans
+          docker compose ps
+          docker image prune -f
+          EOF
