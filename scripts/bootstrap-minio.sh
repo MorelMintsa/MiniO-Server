@@ -5,7 +5,7 @@ set -eu
 : "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}"
 : "${MINIO_BUCKETS:?MINIO_BUCKETS is required}"
 
-MINIO_ENDPOINT="${MINIO_ENDPOINT:-http://minio:9000}"
+MINIO_ENDPOINT="${MINIO_ENDPOINT:-https://s3-minio.gotherdev.online}"
 MINIO_POLICY_NAME="${MINIO_POLICY_NAME:-app-buckets-rw}"
 MC_CONFIG_DIR="${MC_CONFIG_DIR:-/tmp/.mc}"
 
