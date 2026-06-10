@@ -139,53 +139,19 @@ jobs:
             "DEPLOY_PATH='$DEPLOY_PATH' bash -s" << 'EOF'
           set -euo pipefail
 
+          export DOCKER_HOST="tcp://docker-engine:2375"
+
           echo "=== Server identity ==="
           echo "User: $(whoami)"
           echo "ID: $(id)"
           echo "Groups: $(groups)"
           echo "Hostname: $(hostname)"
 
-          echo "=== Docker environment setup ==="
-
-          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-
-          if [ -S "$XDG_RUNTIME_DIR/docker.sock" ]; then
-            export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/docker.sock"
-            echo "Using rootless Docker socket: $DOCKER_HOST"
-          else
-            echo "No rootless Docker socket found at: $XDG_RUNTIME_DIR/docker.sock"
-            echo "Using default Docker socket if available."
-          fi
-
-          echo "DOCKER_HOST=${DOCKER_HOST:-EMPTY}"
-
-          echo "=== Docker diagnostics ==="
+          echo "=== Docker environment ==="
+          echo "DOCKER_HOST=$DOCKER_HOST"
           command -v docker
           docker --version
-
-          echo "Docker context:"
-          docker context show || true
-
-          echo "System socket:"
-          ls -l /var/run/docker.sock || true
-
-          echo "User socket:"
-          ls -l "$XDG_RUNTIME_DIR/docker.sock" || true
-
-          echo "Testing Docker access..."
-          if ! docker info >/dev/null 2>&1; then
-            echo "The deployment user cannot connect to the Docker daemon." >&2
-            echo "Current user: $(whoami)" >&2
-            echo "Current groups: $(groups)" >&2
-            echo "DOCKER_HOST=${DOCKER_HOST:-EMPTY}" >&2
-            echo "System socket:" >&2
-            ls -l /var/run/docker.sock >&2 || true
-            echo "User socket:" >&2
-            ls -l "$XDG_RUNTIME_DIR/docker.sock" >&2 || true
-            exit 1
-          fi
-
-          echo "Docker access OK."
+          docker ps
 
           cd "$DEPLOY_PATH"
 
