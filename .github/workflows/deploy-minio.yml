@@ -36,7 +36,7 @@ jobs:
     env:
       SERVER_HOST: ${{ secrets.DEPLOY_HOST }}
       SERVER_USER: ${{ secrets.DEPLOY_USER }}
-      SERVER_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      SERVER_PORT: ${{ secrets.DEPLOY_PORT }}
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
       SSHPASS: ${{ secrets.DEPLOY_PASSWORD }}
 
@@ -95,7 +95,7 @@ jobs:
     env:
       SERVER_HOST: ${{ secrets.DEPLOY_HOST }}
       SERVER_USER: ${{ secrets.DEPLOY_USER }}
-      SERVER_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      SERVER_PORT: ${{ secrets.DEPLOY_PORT }}
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
       SSHPASS: ${{ secrets.DEPLOY_PASSWORD }}
 
@@ -132,25 +132,40 @@ jobs:
           chmod 600 .env
 
           if ! docker compose version >/dev/null 2>&1 && ! docker-compose version >/dev/null 2>&1; then
-            if command -v apt-get >/dev/null 2>&1; then
-              if [ "$(id -u)" -eq 0 ]; then
-                apt-get update
-                apt-get install -y docker-compose-plugin
-              elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
-                sudo apt-get update
-                sudo apt-get install -y docker-compose-plugin
-              fi
+            case "$(uname -m)" in
+              x86_64|amd64) compose_arch=x86_64 ;;
+              aarch64|arm64) compose_arch=aarch64 ;;
+              *)
+                echo "Unsupported server architecture for Docker Compose: $(uname -m)" >&2
+                exit 1
+                ;;
+            esac
+
+            compose_plugin="$HOME/.docker/cli-plugins/docker-compose"
+            compose_url="https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-$compose_arch"
+            mkdir -p "$(dirname "$compose_plugin")"
+
+            if command -v curl >/dev/null 2>&1; then
+              curl --fail --location --silent --show-error "$compose_url" --output "$compose_plugin"
+            elif command -v wget >/dev/null 2>&1; then
+              wget --quiet "$compose_url" --output-document="$compose_plugin"
+            else
+              echo "curl or wget is required to install Docker Compose." >&2
+              exit 1
             fi
+
+            chmod +x "$compose_plugin"
           fi
 
           if docker compose version >/dev/null 2>&1; then
             compose=(docker compose)
           elif docker-compose version >/dev/null 2>&1; then
             compose=(docker-compose)
+          elif [ -x "${compose_plugin:-$HOME/.docker/cli-plugins/docker-compose}" ]; then
+            compose=("${compose_plugin:-$HOME/.docker/cli-plugins/docker-compose}")
           else
             echo "Docker Compose is not installed on the deployment server." >&2
-            echo "Install it as root with: apt-get update && apt-get install -y docker-compose-plugin" >&2
-            echo "Alternatively, grant passwordless sudo for apt-get to the deployment user." >&2
+            echo "Automatic user-level installation failed." >&2
             exit 1
           fi
 
