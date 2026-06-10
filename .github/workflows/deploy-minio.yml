@@ -54,6 +54,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           test -n "$SERVER_HOST"
           test -n "$SERVER_USER"
           test -n "$SERVER_PORT"
@@ -67,11 +68,15 @@ jobs:
 
       - name: Create deployment directory
         run: |
+          set -euo pipefail
+
           sshpass -e ssh -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" \
             "mkdir -p '$DEPLOY_PATH'"
 
       - name: Sync source code to server
         run: |
+          set -euo pipefail
+
           tar -czf - docker-compose.yml scripts | \
             sshpass -e ssh -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" \
               "tar -xzf - -C '$DEPLOY_PATH'"
@@ -81,7 +86,9 @@ jobs:
           DEPLOY_ENV_FILE: ${{ vars.DEPLOY_ENV_FILE }}
         run: |
           set -euo pipefail
+
           test -n "$DEPLOY_ENV_FILE"
+
           printf '%s\n' "$DEPLOY_ENV_FILE" | \
             sshpass -e ssh -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" \
               "umask 077 && cat > '$DEPLOY_PATH/.env'"
@@ -91,6 +98,8 @@ jobs:
     needs: setup
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
 
     env:
       SERVER_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -110,6 +119,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           test -n "$SERVER_HOST"
           test -n "$SERVER_USER"
           test -n "$SERVER_PORT"
@@ -123,15 +133,72 @@ jobs:
 
       - name: Pull and start MinIO
         run: |
+          set -euo pipefail
+
           sshpass -e ssh -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" \
             "DEPLOY_PATH='$DEPLOY_PATH' bash -s" << 'EOF'
           set -euo pipefail
+
+          echo "=== Server identity ==="
+          echo "User: $(whoami)"
+          echo "ID: $(id)"
+          echo "Groups: $(groups)"
+          echo "Hostname: $(hostname)"
+
+          echo "=== Docker environment setup ==="
+
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+
+          if [ -S "$XDG_RUNTIME_DIR/docker.sock" ]; then
+            export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/docker.sock"
+            echo "Using rootless Docker socket: $DOCKER_HOST"
+          else
+            echo "No rootless Docker socket found at: $XDG_RUNTIME_DIR/docker.sock"
+            echo "Using default Docker socket if available."
+          fi
+
+          echo "DOCKER_HOST=${DOCKER_HOST:-EMPTY}"
+
+          echo "=== Docker diagnostics ==="
+          command -v docker
+          docker --version
+
+          echo "Docker context:"
+          docker context show || true
+
+          echo "System socket:"
+          ls -l /var/run/docker.sock || true
+
+          echo "User socket:"
+          ls -l "$XDG_RUNTIME_DIR/docker.sock" || true
+
+          echo "Testing Docker access..."
+          if ! docker info >/dev/null 2>&1; then
+            echo "The deployment user cannot connect to the Docker daemon." >&2
+            echo "Current user: $(whoami)" >&2
+            echo "Current groups: $(groups)" >&2
+            echo "DOCKER_HOST=${DOCKER_HOST:-EMPTY}" >&2
+            echo "System socket:" >&2
+            ls -l /var/run/docker.sock >&2 || true
+            echo "User socket:" >&2
+            ls -l "$XDG_RUNTIME_DIR/docker.sock" >&2 || true
+            exit 1
+          fi
+
+          echo "Docker access OK."
+
           cd "$DEPLOY_PATH"
 
           test -f .env
           chmod 600 .env
 
-          if ! docker compose version >/dev/null 2>&1 && ! docker-compose version >/dev/null 2>&1; then
+          echo "=== Docker Compose setup ==="
+
+          if docker compose version >/dev/null 2>&1; then
+            compose=(docker compose)
+          elif docker-compose version >/dev/null 2>&1; then
+            compose=(docker-compose)
+          else
             case "$(uname -m)" in
               x86_64|amd64) compose_arch=x86_64 ;;
               aarch64|arm64) compose_arch=aarch64 ;;
@@ -143,6 +210,7 @@ jobs:
 
             compose_plugin="$HOME/.docker/cli-plugins/docker-compose"
             compose_url="https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-$compose_arch"
+
             mkdir -p "$(dirname "$compose_plugin")"
 
             if command -v curl >/dev/null 2>&1; then
@@ -155,41 +223,21 @@ jobs:
             fi
 
             chmod +x "$compose_plugin"
+            compose=("$compose_plugin")
           fi
 
-          if docker compose version >/dev/null 2>&1; then
-            compose=(docker compose)
-          elif docker-compose version >/dev/null 2>&1; then
-            compose=(docker-compose)
-          elif [ -x "${compose_plugin:-$HOME/.docker/cli-plugins/docker-compose}" ]; then
-            compose=("${compose_plugin:-$HOME/.docker/cli-plugins/docker-compose}")
-          else
-            echo "Docker Compose is not installed on the deployment server." >&2
-            echo "Automatic user-level installation failed." >&2
-            exit 1
-          fi
+          echo "Compose command: ${compose[*]}"
+          "${compose[@]}" version
 
-          if docker info >/dev/null 2>&1; then
-            docker_command=(docker)
-          elif command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
-            docker_command=(sudo docker)
-            if [ -x "$HOME/.docker/cli-plugins/docker-compose" ]; then
-              compose=(sudo "$HOME/.docker/cli-plugins/docker-compose")
-            else
-              compose=(sudo "${compose[@]}")
-            fi
-          else
-            echo "The deployment user cannot connect to the Docker daemon." >&2
-            echo "Ensure Docker is running, then add the deployment user to the docker group:" >&2
-            echo "  sudo systemctl enable --now docker" >&2
-            echo "  sudo usermod -aG docker $(id -un)" >&2
-            echo "Reconnect the SSH session after changing group membership." >&2
-            exit 1
-          fi
+          echo "=== Deploy MinIO ==="
 
           "${compose[@]}" config --quiet
           "${compose[@]}" pull
           "${compose[@]}" up -d --remove-orphans
           "${compose[@]}" ps
-          "${docker_command[@]}" image prune -f
+
+          echo "=== Docker cleanup ==="
+          docker image prune -f
+
+          echo "Deployment completed successfully."
           EOF
