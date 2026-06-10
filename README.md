@@ -80,7 +80,7 @@ La pipeline GitHub Actions `.github/workflows/deploy-minio.yml` :
 2. se connecte en SSH avec un mot de passe;
 3. copie `docker-compose.yml` et `scripts/` avec `tar` via SSH, sans supprimer `minio-data/` ni `certs/`;
 4. ecrit le contenu de `DEPLOY_ENV_FILE` dans `.env` sur le serveur;
-5. execute `docker compose pull` puis `docker compose up -d --remove-orphans`.
+5. execute Compose v2 (`docker compose`) ou, a defaut, Compose v1 (`docker-compose`) pour mettre a jour la stack.
 
 Secrets GitHub Actions requis :
 
@@ -93,7 +93,7 @@ DEPLOY_PASSWORD
 DEPLOY_ENV_FILE
 ```
 
-`DEPLOY_PORT` utilise `22` par defaut. `DEPLOY_ENV_FILE` doit contenir le contenu complet du fichier `.env` de production. La pipeline ne demande ni passphrase, ni cle privee/publique. Le compte `DEPLOY_USER` doit pouvoir ecrire dans `DEPLOY_PATH` et executer Docker Compose.
+`DEPLOY_PORT` utilise `22` par defaut. `DEPLOY_ENV_FILE` doit contenir le contenu complet du fichier `.env` de production. La pipeline ne demande ni passphrase, ni cle privee/publique. Le compte `DEPLOY_USER` doit pouvoir ecrire dans `DEPLOY_PATH` et executer Docker Compose. Le serveur doit fournir soit le plugin Compose v2 (`docker compose`), soit la commande Compose v1 (`docker-compose`).
 
 Pour mettre a jour MinIO, modifie la version par defaut de l'image dans `docker-compose.yml`, commit, puis declenche la pipeline. Si `MINIO_VERSION` est defini dans le `.env` du serveur, cette valeur distante prendra le dessus. Attention : certaines releases source MinIO n'ont pas d'image Docker publique correspondante ; verifie toujours le tag Docker avant de le deployer.
 

@@ -131,9 +131,19 @@ jobs:
           test -f .env
           chmod 600 .env
 
-          docker compose config --quiet
-          docker compose pull
-          docker compose up -d --remove-orphans
-          docker compose ps
+          if docker compose version >/dev/null 2>&1; then
+            compose=(docker compose)
+          elif docker-compose version >/dev/null 2>&1; then
+            compose=(docker-compose)
+          else
+            echo "Docker Compose is not installed on the deployment server." >&2
+            echo "Install the Docker Compose v2 plugin or the docker-compose command." >&2
+            exit 1
+          fi
+
+          "${compose[@]}" config --quiet
+          "${compose[@]}" pull
+          "${compose[@]}" up -d --remove-orphans
+          "${compose[@]}" ps
           docker image prune -f
           EOF
